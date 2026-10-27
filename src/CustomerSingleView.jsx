@@ -82,8 +82,84 @@ const Row = ({ k, children }) => (
   <tr><td style={styles.keyCell}>{k}</td><td style={styles.td}>{children}</td></tr>
 );
 
+// Score decomposition: sample risk score, shown as-is from the prebind screenshot.
+// Not yet wired to customer data.
+const SCORE = {
+  total: 64,
+  factors: [
+    { name: "Claims history", score: 92, weight: 25, contributes: 22.9, status: "returned", source: "LexisNexis CLUE",
+      note: "Nil claims in five years · Three-year loss ratio 11%" },
+    { name: "Financial health", score: 83, weight: 20, contributes: 16.5, status: "returned", source: "D&B / Bureau van Dijk",
+      note: "D&B 2A2 — low risk · Established 1974, 52 years trading · Revenue £96.5m, 410 employees" },
+    { name: "CAT exposure", score: 41, weight: 35, contributes: 14.3, status: "returned", source: "RMS / Verisk · Geospatial hazard API",
+      note: "CAT expected loss £3.1m against a £2.5m class threshold · Flood zone 2, watercourse 400m north" },
+    { name: "Submission quality", score: 80, weight: 5, contributes: 4, status: "no-call", source: "Submission documents — slip, SOV, survey",
+      note: "11 of 12 fields auto-accepted at 95%+, SIC code held for review · Established broker, clean submission history" },
+    { name: "Risk characteristics", score: 42, weight: 15, contributes: 6.3, status: "timeout", source: "Cyber maturity vendor",
+      note: "TIV £340m, above the £250m authority limit · Adjacent solvent storage at 180m, guideline 250m · Steel frame, non-combustible cladding, 2011",
+      warning: "Cyber maturity — vendor timed out — not returned, confidence 90%" },
+  ],
+};
+
+const bandColor = (s) => (s < 45 ? TOKENS.danger : s < 75 ? TOKENS.orange : TOKENS.green);
+const STATUS = {
+  returned: { label: "Sources returned", bg: "#E8F3EB", fg: TOKENS.ok },
+  "no-call": { label: "No call needed", bg: "#EFEFEF", fg: TOKENS.inkMuted },
+  timeout: { label: "Source timed out", bg: TOKENS.yellowSoft, fg: TOKENS.warn },
+};
+
+function ScoreDecomposition({ retrying, onRetry }) {
+  return (
+    <>
+      <div style={styles.sub}>Why the score is what it is: each factor, the evidence behind it, where that evidence came from, and whether it arrived.</div>
+      {SCORE.factors.map((f, i) => {
+        const st = STATUS[f.status];
+        const color = bandColor(f.score);
+        return (
+          <div key={f.name} style={styles.factor}>
+            <div style={styles.factorHead}>
+              <span style={styles.idx}>{i + 1}</span>
+              <span style={styles.factorName}>{f.name}</span>
+              <span style={{ fontWeight: 700, color }}>{f.score}</span>
+              <span style={{ ...styles.pill, background: st.bg, color: st.fg }}>{st.label}</span>
+              {f.status === "timeout" && (
+                <button onClick={onRetry} disabled={retrying} style={styles.retryBtn}>
+                  {retrying ? "Retrying…" : "↻ Retry call"}
+                </button>
+              )}
+              <span style={styles.weight}>weight {f.weight}% · contributes {f.contributes}</span>
+            </div>
+            <div style={styles.barTrack}><div style={{ ...styles.barFill, width: `${f.score}%`, background: color }} /></div>
+            <div style={styles.muted}>
+              {f.note}
+              {f.warning && <span style={{ color: TOKENS.yellowInk, fontWeight: 600 }}> · {f.warning}</span>}
+            </div>
+            <div style={styles.factorSource}>Source: {f.source}</div>
+          </div>
+        );
+      })}
+      <div style={styles.gate}>Screening sits outside the score: World-Check (Refinitiv), no matches. A pass/fail gate at DP-02.</div>
+      <div style={styles.sub}>Where the score routes it, before referral triggers are applied</div>
+      <div style={styles.routeTrack}>
+        <div style={styles.routeRefer} />
+        <div style={{ ...styles.routeMarker, left: `${SCORE.total}%` }}>
+          <span style={styles.routeBadge}>{SCORE.total}</span>
+        </div>
+      </div>
+      <div style={styles.routeLegend}>
+        <div><div style={{ color: TOKENS.danger, fontWeight: 700 }}>Decline range</div><div style={styles.muted}>1–44</div></div>
+        <div style={{ textAlign: "center" }}><div style={{ color: TOKENS.orange, fontWeight: 700 }}>Refer range</div><div style={styles.muted}>45–74</div></div>
+        <div style={{ textAlign: "right" }}><div style={{ color: TOKENS.green, fontWeight: 700 }}>Quote range</div><div style={styles.muted}>75–100</div></div>
+      </div>
+    </>
+  );
+}
+
 export default function CustomerSingleView() {
   const [currentId, setCurrentId] = useState(DATA[0].id);
+  const [showScore, setShowScore] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => { setRetrying(true); setTimeout(() => setRetrying(false), 1500); };
   const c = DATA.find((x) => x.id === currentId);
   const openClaims = c.claims.filter((k) => k.status === "Open");
   const totalPremium = c.policies.reduce((a, p) => a + p.premium, 0);
@@ -114,6 +190,9 @@ export default function CustomerSingleView() {
         <header style={styles.topbar}>
           <span style={styles.crumb}>Customers</span>
           <h1 style={styles.h1}>{c.party.name}</h1>
+          <button onClick={() => setShowScore((v) => !v)} style={styles.primaryBtn}>
+            {showScore ? "Hide risk score" : "Run risk score"}
+          </button>
           <span style={styles.topRight}>Sample data · each block shows its source's last update</span>
         </header>
 
@@ -126,6 +205,12 @@ export default function CustomerSingleView() {
             <Kpi v={c.risk.band} l={`Risk band (${c.risk.score})`} tone={c.risk.band === "Low" ? "ok" : "warn"} />
             <Kpi v={money(c.money.arrears)} l="Arrears" tone={c.money.arrears ? "danger" : "ok"} />
           </div>
+
+          {showScore && (
+            <Card title="Score decomposition" full>
+              <ScoreDecomposition retrying={retrying} onRetry={retry} />
+            </Card>
+          )}
 
           {(c.party.vulnerable || c.policies.some((p) => /pending/i.test(p.status)) || openClaims.length > 0) && (
             <Card title="Needs attention" full>
@@ -278,4 +363,22 @@ const styles = {
   timeline: { listStyle: "none", padding: 0, margin: 0 },
   timelineItem: { borderLeft: `2px solid ${TOKENS.accent}`, padding: "2px 0 12px 12px" },
   footer: { textAlign: "center", color: TOKENS.inkMuted, fontSize: 12, padding: 16 },
+  primaryBtn: { marginLeft: "auto", border: `1px solid ${TOKENS.accent}`, background: TOKENS.accent, color: "#fff", borderRadius: 4, padding: "6px 12px", font: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer" },
+  factor: { padding: "12px 0", borderBottom: `1px solid ${TOKENS.border}` },
+  factorHead: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 },
+  idx: { width: 22, height: 22, borderRadius: 999, background: TOKENS.canvas, border: `1px solid ${TOKENS.border}`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: TOKENS.inkMuted },
+  factorName: { fontWeight: 700 },
+  pill: { fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", padding: "3px 8px", borderRadius: 999 },
+  retryBtn: { background: TOKENS.surface, border: `1px solid ${TOKENS.border}`, borderRadius: 4, padding: "3px 10px", font: "inherit", fontSize: 12, color: TOKENS.ink, cursor: "pointer" },
+  weight: { marginLeft: "auto", fontSize: 12, color: TOKENS.inkMuted, whiteSpace: "nowrap" },
+  barTrack: { height: 8, background: "#EDEDED", borderRadius: 4, overflow: "hidden", marginBottom: 6 },
+  barFill: { height: "100%", borderRadius: 4 },
+  factorSource: { fontSize: 14, marginTop: 4 },
+  gate: { color: TOKENS.inkMuted, fontSize: 12, padding: "12px 0", borderTop: `1px solid ${TOKENS.border}` },
+  routeTrack: { position: "relative", height: 8, background: "#EDEDED", borderRadius: 4, margin: "18px 0 10px" },
+  routeRefer: { position: "absolute", left: "45%", width: "30%", top: 0, bottom: 0, background: TOKENS.orange, borderRadius: 4 },
+  routeMarker: { position: "absolute", top: -6, bottom: -6, width: 2, background: TOKENS.ink, transform: "translateX(-1px)" },
+  routeBadge: { position: "absolute", top: -26, left: "50%", transform: "translateX(-50%)", background: TOKENS.ink, color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 },
+  routeLegend: { display: "flex", justifyContent: "space-between", fontSize: 12, gap: 8 },
+  routeSub: {},
 };
